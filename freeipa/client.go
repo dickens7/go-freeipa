@@ -63,6 +63,26 @@ func (t *Error) Error() string {
 	return fmt.Sprintf("%v (%v): %v", t.Name, t.Code, t.Message)
 }
 
+func NewClient(host string, tspt *http.Transport, user, pw string) (*Client, error) {
+
+	jar, e := cookiejar.New(&cookiejar.Options{
+		PublicSuffixList: nil, // this should be fine, since we only use one server
+	})
+	if e != nil {
+		return nil, e
+	}
+	c := &Client{
+		host: host,
+		hc: &http.Client{
+			Transport: tspt,
+			Jar:       jar,
+		},
+		user: user,
+		pw:   pw,
+	}
+	return c, nil
+}
+
 // Connect connects to the FreeIPA server and performs an initial login.
 func Connect(host string, tspt *http.Transport, user, pw string) (*Client, error) {
 	jar, e := cookiejar.New(&cookiejar.Options{
@@ -124,6 +144,28 @@ func ConnectWithKerberos(host string, tspt *http.Transport, k5ConnectOpts *Kerbe
 		return nil, fmt.Errorf("initial login falied: %v", e)
 	}
 	return c, nil
+}
+
+func (c *Client) ChangePassword(password string) error {
+	data := url.Values{
+		"user":         []string{c.user},
+		"old_password": []string{c.pw},
+		"new_password": []string{password},
+	}
+	res, e := c.hc.PostForm(fmt.Sprintf("https://%v/ipa/session/change_password", c.host), data)
+	if e != nil {
+		return e
+	}
+	if res.StatusCode != http.StatusOK {
+		if res.StatusCode == http.StatusUnauthorized {
+			fmt.Println(res)
+			return unauthorizedHTTPResponseToFreeipaError(res)
+		}
+		return fmt.Errorf("unexpected http status code: %v", res.StatusCode)
+	}
+	fmt.Println(res.Header.Get("X-Ipa-Pwchange-Policy-Error"))
+	fmt.Println(res.Header.Get("X-Ipa-Pwchange-Result"))
+	return nil
 }
 
 func (c *Client) exec(req *request) (io.ReadCloser, error) {
